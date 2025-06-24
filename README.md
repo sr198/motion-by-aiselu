@@ -24,12 +24,11 @@ motion-aiselu/
 ### Technology Stack
 
 **Backend:**
-- **Framework**: FastAPI (Python 3.11+)
-- **AI/ML**: Google ADK (Agents Development Kit) with Gemini
-- **Database**: PostgreSQL with SQLAlchemy ORM
-- **Cache**: Redis
-- **Task Queue**: Celery
-- **Image Search**: Bing Image Search API via MCP
+- **Framework**: Python 3.11+ with Google ADK (Agents Development Kit)
+- **AI/ML**: Google Gemini 2.0 Flash via ADK agents
+- **Image Search**: Bing Search API via MCP (Model Context Protocol)
+- **Package Management**: uv for fast Python dependency management
+- **Architecture**: Agent-based with SOAP generation and exercise illustration subagents
 
 **Frontend:**
 - **Framework**: Flutter
@@ -41,10 +40,10 @@ motion-aiselu/
 ### Prerequisites
 
 - Python 3.11 or higher
-- PostgreSQL 15+
-- Redis 7+
-- Flutter SDK (for frontend development)
-- uv (Python package manager)
+- uv (Python package manager) - Install from [astral.sh/uv](https://astral.sh/uv)
+- Google API key for Gemini
+- Bing Search API key for exercise illustrations
+- Flutter SDK (for frontend development, when ready)
 
 ### Backend Setup
 
@@ -65,35 +64,29 @@ motion-aiselu/
 3. **Configure environment variables**
    ```bash
    cp .env.example .env
-   # Edit .env with your API keys and configuration
+   # Edit .env with your API keys:
+   # - GOOGLE_API_KEY: Your Google API key for Gemini
+   # - BING_SEARCH_API_KEY: Your Bing Search API key for exercise images
    ```
 
-4. **Start required services**
+4. **Start MCP Server for Exercise Illustrations**
    ```bash
-   # Using Docker Compose (recommended)
-   docker-compose up -d postgres redis
+   # In a separate terminal, start the MCP Bing Search server
+   cd backend
+   uv add mcp-server-bing-search
+   export BING_SEARCH_API_KEY=your_api_key_here
+   uv run mcp-server-bing-search --transport sse --port 6030
+   ```
    
-   # Or install locally
-   # - PostgreSQL: https://www.postgresql.org/download/
-   # - Redis: https://redis.io/download
-   ```
+   **Keep this running** - the exercise illustration feature requires this MCP server.
 
-5. **Initialize the database**
+5. **Run the main application**
    ```bash
-   # Create database
-   createdb motion_aiselu
-   
-   # Run migrations
-   alembic upgrade head
+   # In another terminal
+   cd backend
+   source .venv/bin/activate
+   python src/motion/main.py
    ```
-
-6. **Run the backend server**
-   ```bash
-   uvicorn src.motion_aiselu.main:app --reload
-   ```
-
-   The API will be available at `http://localhost:8000`
-   API documentation at `http://localhost:8000/docs`
 
 ### Frontend Setup
 
@@ -120,10 +113,11 @@ cd frontend
      - Plan: Treatment recommendations and exercises
 
 3. **Exercise Illustration Integration**
-   - Automatic detection of exercises mentioned in reports
-   - Bing image search integration for finding relevant illustrations
-   - Thumbnail preview and selection interface
-   - Proper attribution and copyright compliance
+   - Automatic detection of exercises mentioned in SOAP reports
+   - AI-powered identification of exercises needing visual aids
+   - Bing image search integration via MCP for finding relevant illustrations
+   - Returns top 5 image results per exercise with URLs and descriptions
+   - Designed for patient education and proper form demonstration
 
 4. **Report Management**
    - Save and edit generated reports
@@ -135,10 +129,13 @@ cd frontend
 
 1. **Start Session**: Physiotherapist begins a new patient session
 2. **Dictate**: Record the interaction naturally
-3. **Process**: AI converts transcript to SOAP report
-4. **Review**: Edit and refine the generated report
-5. **Enhance**: Add exercise illustrations if needed
-6. **Export**: Save and share the final report
+3. **Process**: Main SOAP agent converts transcript to structured SOAP report
+4. **Enhance**: Exercise illustration subagent automatically:
+   - Analyzes the SOAP report for mentioned exercises
+   - Searches for appropriate demonstration images
+   - Returns top 5 relevant images per exercise
+5. **Review**: Edit and refine the generated report with illustrations
+6. **Export**: Save and share the final comprehensive report
 
 ## 🛠️ Development
 
@@ -146,29 +143,17 @@ cd frontend
 
 ```
 backend/
-├── src/motion_aiselu/
-│   ├── agents/          # ADK agents for report generation
-│   ├── tools/           # Tools for specific tasks
-│   ├── api/             # FastAPI endpoints
-│   ├── models/          # Database models
-│   ├── services/        # Business logic
-│   └── utils/           # Utilities and helpers
-└── tests/               # Test suite
-```
-
-### Running Tests
-
-```bash
-# Backend tests
-cd backend
-pytest
-
-# Run with coverage
-pytest --cov=src/motion_aiselu
-
-# Run specific test categories
-pytest tests/unit
-pytest tests/integration
+├── src/motion/
+│   ├── agents/          # Google ADK agents
+│   │   └── soap_agents/ # SOAP report generation agents
+│   │       ├── agent.py                          # Main SOAP agent
+│   │       ├── exercise_illustration_agent.py    # Exercise search subagent
+│   │       └── prompts.py                        # Agent instructions
+│   ├── api/             # FastAPI endpoints (planned)
+│   ├── models/          # Database models (planned)
+│   ├── tools/           # Agent tools for specific tasks
+│   └── main.py          # Application entry point
+└── tests/               # Test suite (planned)
 ```
 
 ### Code Quality
@@ -181,6 +166,17 @@ isort src tests
 # Lint
 ruff check src tests
 mypy src
+```
+
+### Testing
+
+```bash
+# Run tests (when implemented)
+cd backend
+pytest
+
+# Run with coverage
+pytest --cov=src/motion
 ```
 
 ## 🔑 API Endpoints
