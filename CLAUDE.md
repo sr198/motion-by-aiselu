@@ -4,12 +4,12 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-Motion by Aiselu is a mobile physiotherapy documentation app that uses AI to convert voice dictation into structured SOAP reports. The project consists of a Python backend using Google ADK (Agents Development Kit) and a Flutter frontend.
+Motion by Aiselu is an AI-powered chat application for physiotherapists that supports both voice and text communication. While designed for general conversation, it has specialized capabilities for generating structured SOAP reports from patient session descriptions. The project consists of a Python backend using Google ADK (Agents Development Kit) and a native iOS Swift frontend.
 
 ## Architecture
 
 - **Backend**: Python 3.11+ with Google ADK agents, located in `backend/src/motion/`
-- **Frontend**: Flutter mobile app (structure not yet implemented)
+- **Frontend**: Native iOS Swift chat app with voice/text input and specialized SOAP report features
 - **Package Management**: Uses `uv` for Python dependency management
 - **AI Framework**: Google ADK with Gemini for agent-based processing
 
@@ -52,23 +52,8 @@ mypy src
 ```bash
 # Copy and configure environment variables
 cp .env.example .env
-# Edit .env with your API keys and configuration
+# Edit .env with your API keys including LINKUP_API_KEY for exercise illustrations
 ```
-
-### MCP Server Setup (Required for Exercise Illustrations)
-The exercise illustration feature requires the Bing Search MCP server to be running:
-
-```bash
-# Install MCP Bing Search server
-uv add mcp-server-bing-search
-
-# Run the MCP server (in a separate terminal)
-cd backend
-export BING_SEARCH_API_KEY=your_api_key_here
-uv run mcp-server-bing-search --transport sse --port 6030
-```
-
-The MCP server must be running on port 6030 before starting the main application.
 
 ## Project Structure
 
@@ -85,27 +70,29 @@ backend/src/motion/
 
 ### Agent Architecture
 - Uses Google ADK (Agents Development Kit) with Gemini
-- Main SOAP agent located at `backend/src/motion/agents/soap_agents/agent.py`
-- Exercise illustration subagent at `backend/src/motion/agents/soap_agents/exercise_illustration_agent.py`
-- Agents handle the conversion of voice transcripts to structured SOAP reports with exercise illustrations
+- Conversational AI agent with specialized SOAP capabilities located at `backend/src/motion/agents/soap_agents/agent.py`
+- Exercise illustration search implemented as a tool at `backend/src/motion/tools/exercise_illustration_tool.py`
+- Agent handles general physiotherapy conversations and can generate structured SOAP reports when patient session data is provided
 
 ### Core Workflow
-1. Voice dictation transcription
-2. AI-powered SOAP report generation via agents
-3. Exercise illustration search and integration
-4. Report export and management
+1. **General Chat Mode**: User communicates via voice/text with AI agent for general physiotherapy discussions
+2. **SOAP Generation Trigger**: When user provides patient session information, agent automatically detects this and initiates SOAP report generation
+3. **Clarification Process**: Agent asks clarifying questions if patient information is incomplete
+4. **Exercise Illustration Selection**: For generated SOAP reports, agent searches for exercise images and presents options to user
+5. **Final Report Creation**: User selects desired images and can export complete SOAP report as PDF
 
 ### External Dependencies
 - Google ADK for agent framework
-- Bing Image Search API for exercise illustrations
+- Linkup AI Search API for exercise illustrations
 - PostgreSQL + SQLAlchemy ORM (planned)
 - Redis for caching (planned)
 - Celery for task queues (planned)
 
 ## Development Notes
 
-- The project is in early development - many components mentioned in the README are not yet implemented
-- Current implementation is minimal with basic structure in place
+- The project includes both general conversational AI and specialized SOAP report generation
+- iOS app uses native Speech framework for optimal voice recognition
 - Backend uses `uv` for dependency management instead of pip/poetry
-- Environment variables should be configured in `.env` file
-- The main application logic will be implemented as Google ADK agents
+- Environment variables should be configured in `.env` file including LINKUP_API_KEY for exercise illustrations
+- Agent uses structured message types for frontend rendering: `chat_message`, `soap_draft`, `exercise_selection`, `final_report`, `clarification_needed`
+- Frontend implements chat-based UI with specialized components for SOAP workflow

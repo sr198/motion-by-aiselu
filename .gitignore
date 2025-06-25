@@ -32,3 +32,21 @@ htmlcov/
 dist/
 build/
 *.egg-info/
+
+# iOS/Xcode
+ios/**/DerivedData/
+ios/**/build/
+ios/**/*.xcworkspace/xcuserdata/
+ios/**/*.xcodeproj/xcuserdata/
+ios/**/*.xcodeproj/project.xcworkspace/xcuserdata/
+ios/**/UserInterfaceState.xcuserstate
+ios/**/.DS_Store
+ios/**/Pods/
+ios/**/Podfile.lock
+ios/**/*.ipa
+ios/**/*.dSYM.zip
+ios/**/*.dSYM
+ios/**/fastlane/report.xml
+ios/**/fastlane/Preview.html
+ios/**/fastlane/screenshots/**/*.png
+ios/**/fastlane/test_output
