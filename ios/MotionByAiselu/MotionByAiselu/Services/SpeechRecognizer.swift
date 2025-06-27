@@ -9,11 +9,20 @@ class SpeechRecognizer: ObservableObject {
     @Published var isRecording = false
     @Published var isAvailable = false
     @Published var error: Error?
+    @Published var autoStoppedRecording = false
+    @Published var hasDetectedSpeech = false
+    
+    // Auto-stop configuration
+    var silenceTimeout: TimeInterval = 5.0 // Configurable silence timeout in seconds
     
     private var audioEngine: AVAudioEngine?
     private var speechRecognizer: SFSpeechRecognizer?
     private var recognitionRequest: SFSpeechAudioBufferRecognitionRequest?
     private var recognitionTask: SFSpeechRecognitionTask?
+    
+    // Silence detection
+    private var silenceTimer: Timer?
+    private var lastTranscriptUpdate: Date?
     
     init() {
         Task {
@@ -106,6 +115,12 @@ class SpeechRecognizer: ObservableObject {
         print("SpeechRecognizer: Starting recording...")
         error = nil
         transcript = ""
+        autoStoppedRecording = false
+        
+        // Reset silence detection state
+        lastTranscriptUpdate = nil
+        hasDetectedSpeech = false
+        stopSilenceTimer()
         
         do {
             try startSpeechRecognition()
@@ -117,13 +132,16 @@ class SpeechRecognizer: ObservableObject {
         }
     }
     
-    func stopRecording() {
+    func stopRecording(autoStopped: Bool = false) {
         guard isRecording else { 
             print("SpeechRecognizer: Not currently recording")
             return 
         }
         
-        print("SpeechRecognizer: Stopping recording...")
+        print("SpeechRecognizer: Stopping recording (auto-stopped: \(autoStopped))...")
+        
+        // Stop silence timer
+        stopSilenceTimer()
         
         audioEngine?.stop()
         audioEngine?.inputNode.removeTap(onBus: 0)
@@ -135,6 +153,7 @@ class SpeechRecognizer: ObservableObject {
         recognitionTask = nil
         
         isRecording = false
+        autoStoppedRecording = autoStopped
         print("SpeechRecognizer: Recording stopped")
     }
     
@@ -177,8 +196,16 @@ class SpeechRecognizer: ObservableObject {
         recognitionTask = speechRecognizer?.recognitionTask(with: recognitionRequest) { [weak self] result, error in
             Task { @MainActor in
                 if let result = result {
-                    self?.transcript = result.bestTranscription.formattedString
-                    print("SpeechRecognizer: Transcript updated: \(result.bestTranscription.formattedString)")
+                    let newTranscript = result.bestTranscription.formattedString
+                    let transcriptChanged = newTranscript != self?.transcript
+                    
+                    self?.transcript = newTranscript
+                    print("SpeechRecognizer: Transcript updated: \(newTranscript)")
+                    
+                    // Handle silence detection
+                    if transcriptChanged && !newTranscript.isEmpty {
+                        self?.handleTranscriptUpdate()
+                    }
                     
                     // If result is final, stop recording
                     if result.isFinal {
@@ -196,6 +223,45 @@ class SpeechRecognizer: ObservableObject {
         }
     }
     
+    // MARK: - Silence Detection
+    
+    private func handleTranscriptUpdate() {
+        print("SpeechRecognizer: Handling transcript update for silence detection")
+        
+        // Mark that we've detected speech
+        hasDetectedSpeech = true
+        lastTranscriptUpdate = Date()
+        
+        // Restart the silence timer
+        restartSilenceTimer()
+    }
+    
+    private func restartSilenceTimer() {
+        stopSilenceTimer()
+        
+        // Only start silence timer if we've detected speech at least once
+        guard hasDetectedSpeech && isRecording else { return }
+        
+        print("SpeechRecognizer: Starting silence timer for \(silenceTimeout) seconds")
+        silenceTimer = Timer.scheduledTimer(withTimeInterval: silenceTimeout, repeats: false) { [weak self] _ in
+            Task { @MainActor in
+                self?.handleSilenceTimeout()
+            }
+        }
+    }
+    
+    private func stopSilenceTimer() {
+        silenceTimer?.invalidate()
+        silenceTimer = nil
+    }
+    
+    private func handleSilenceTimeout() {
+        guard isRecording && hasDetectedSpeech else { return }
+        
+        print("SpeechRecognizer: Silence timeout reached, auto-stopping recording")
+        stopRecording(autoStopped: true)
+    }
+    
     // MARK: - Cleanup
     
     deinit {
@@ -204,6 +270,7 @@ class SpeechRecognizer: ObservableObject {
         audioEngine?.inputNode.removeTap(onBus: 0)
         recognitionRequest?.endAudio()
         recognitionTask?.cancel()
+        silenceTimer?.invalidate()
     }
 }
 

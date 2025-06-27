@@ -3,12 +3,24 @@ import SwiftUI
 struct ChatView: View {
     @StateObject private var speechRecognizer = SpeechRecognizer()
     @StateObject private var apiClient = APIClient()
+    @StateObject private var persistenceService = ConversationPersistenceService.shared
     
     @State private var chatSession = ChatSession()
     @State private var currentInput = ""
     @State private var specialState: SpecialMessageState = .none
     @State private var selectedImages: Set<String> = []
     @State private var isProcessing = false
+    @State private var isNewConversation = true
+    
+    // Voice settings
+    @State private var autoStopTimeout: TimeInterval = 5.0
+    
+    // Conversation persistence
+    private let conversationId: UUID?
+    
+    init(conversationId: UUID? = nil) {
+        self.conversationId = conversationId
+    }
     
     var body: some View {
         VStack(spacing: 0) {
@@ -32,23 +44,56 @@ struct ChatView: View {
         .onReceive(speechRecognizer.$transcript) { transcript in
             currentInput = transcript
         }
+        .onReceive(speechRecognizer.$autoStoppedRecording) { autoStopped in
+            if autoStopped {
+                print("ChatView: Auto-stop detected, sending message")
+                sendMessage()
+            }
+        }
+        .onAppear {
+            // Sync timeout setting
+            speechRecognizer.silenceTimeout = autoStopTimeout
+            
+            // Load existing conversation if ID provided
+            if let conversationId = conversationId {
+                loadExistingConversation(id: conversationId)
+            } else {
+                isNewConversation = true
+            }
+        }
+        .onChange(of: autoStopTimeout) { _, newTimeout in
+            speechRecognizer.silenceTimeout = newTimeout
+        }
     }
     
     private var headerView: some View {
         VStack {
             HStack {
                 VStack(alignment: .leading) {
-                    Text("Motion by Aiselu")
+                    Text("Motion")
                         .font(.title2)
                         .fontWeight(.bold)
                     Text("AI Physiotherapy Assistant")
-                        .font(.caption)
+                        .font(.body)
                         .foregroundColor(.secondary)
                 }
                 
                 Spacer()
                 
-                Button(action: startNewSession) {
+                // Voice settings button
+                Menu {
+                    Picker("Auto-stop timeout", selection: $autoStopTimeout) {
+                        Text("3 seconds").tag(3.0)
+                        Text("5 seconds").tag(5.0)
+                        Text("7 seconds").tag(7.0)
+                        Text("10 seconds").tag(10.0)
+                    }
+                } label: {
+                    Image(systemName: "gear")
+                        .font(.title2)
+                }
+                
+                Button(action: saveAndStartNewSession) {
                     Image(systemName: "plus.bubble")
                         .font(.title2)
                 }
@@ -111,30 +156,17 @@ struct ChatView: View {
         case .none:
             EmptyView()
         case .waitingForImageSelection(let data):
+            // Full screen exercise selection
             ExerciseSelectionView(
-                exerciseName: data.exerciseName,
-                exerciseDescription: data.exerciseDescription,
-                images: data.images,
+                exercises: data.exercises,
                 selectedImages: $selectedImages,
                 onContinue: handleImageSelection
             )
-            .padding()
-            .background(Color(.systemGray6))
-        case .waitingForClarification(let data):
-            ClarificationView(
-                questions: data.questions,
-                onRespond: handleClarificationResponse
-            )
-            .padding()
-            .background(Color(.systemGray6))
-        case .finalReportReady(let data):
-            FinalReportView(
-                content: data.content,
-                selectedImages: data.selectedImages,
-                onExportPDF: exportToPDF
-            )
-            .padding()
-            .background(Color(.systemGray6))
+            .background(Color(.systemBackground))
+            .ignoresSafeArea(.container, edges: [.bottom])
+        case .finalReportReady:
+            // Final reports are now handled as regular chat messages
+            EmptyView()
         }
     }
     
@@ -145,7 +177,7 @@ struct ChatView: View {
             HStack(spacing: 12) {
                 // Text Input
                 HStack(alignment: .bottom) {
-                    TextField("Type your message or tap mic to speak...", text: $currentInput, axis: .vertical)
+                    TextField("Tap mic to speak (auto-stops after silence) or type...", text: $currentInput, axis: .vertical)
                         .textFieldStyle(.plain)
                         .lineLimit(2...6)
                         .frame(minHeight: 40)
@@ -192,12 +224,34 @@ struct ChatView: View {
             
             // Recording indicator or error
             if speechRecognizer.isRecording {
+                VStack(spacing: 4) {
+                    HStack {
+                        Image(systemName: "waveform")
+                            .foregroundColor(.red)
+                        Text("Recording... Auto-stops after \(Int(autoStopTimeout))s of silence")
+                            .font(.caption)
+                            .foregroundColor(.red)
+                    }
+                    
+                    if speechRecognizer.hasDetectedSpeech {
+                        HStack {
+                            Image(systemName: "timer")
+                                .foregroundColor(.orange)
+                                .font(.caption2)
+                            Text("Silence timer active - speak or tap to stop")
+                                .font(.caption2)
+                                .foregroundColor(.orange)
+                        }
+                    }
+                }
+                .padding(.bottom, 8)
+            } else if speechRecognizer.autoStoppedRecording {
                 HStack {
-                    Image(systemName: "waveform")
-                        .foregroundColor(.red)
-                    Text("Recording... Tap to stop")
+                    Image(systemName: "timer.circle")
+                        .foregroundColor(.green)
+                    Text("Auto-stopped after silence - sending message...")
                         .font(.caption)
-                        .foregroundColor(.red)
+                        .foregroundColor(.green)
                 }
                 .padding(.bottom, 8)
             } else if let error = speechRecognizer.error {
@@ -216,22 +270,16 @@ struct ChatView: View {
     
     // MARK: - Actions
     
-    private func startNewSession() {
-        chatSession = ChatSession()
-        specialState = .none
-        selectedImages.removeAll()
-        currentInput = ""
-        speechRecognizer.stopRecording()
-    }
-    
     private func clearInput() {
         currentInput = ""
-        speechRecognizer.stopRecording()
+        speechRecognizer.stopRecording(autoStopped: false)
     }
     
     private func handleInputAction() {
         if speechRecognizer.isRecording {
-            speechRecognizer.stopRecording()
+            // Manual stop - we'll send the message manually
+            speechRecognizer.stopRecording(autoStopped: false)
+            sendMessage()
         } else if !currentInput.isEmpty {
             sendMessage()
         } else {
@@ -249,12 +297,17 @@ struct ChatView: View {
         // Add user message to chat
         chatSession.addUserMessage(messageContent)
         
+        // Auto-save conversation after user message
+        saveConversationIfNeeded()
+        
         // Send to API
         isProcessing = true
         Task {
             await apiClient.processTranscript(messageContent)
             await MainActor.run {
                 isProcessing = false
+                // Auto-save after API response
+                saveConversationIfNeeded()
             }
         }
     }
@@ -266,40 +319,40 @@ struct ChatView: View {
             specialState = .none
             
         case .soapDraft:
-            chatSession.addAssistantMessage("I've generated a SOAP report based on your patient session:", messageType: .soapDraft)
-            chatSession.addAssistantMessage(message.content ?? "", messageType: .soapDraft)
+            chatSession.addAssistantMessage("I've generated a SOAP report based on your patient session:")
+            chatSession.addStructuredMessage(message)
             specialState = .none
             
         case .exerciseSelection:
             let data = ExerciseSelectionData(
-                exerciseName: message.exerciseName ?? "",
-                exerciseDescription: message.exerciseDescription ?? "",
-                images: message.images ?? []
+                exercises: message.exercises ?? []
             )
-            chatSession.addAssistantMessage("Please select exercise illustrations for \(data.exerciseName):", messageType: .exerciseSelection)
+            chatSession.addAssistantMessage("Please select exercise illustrations for your SOAP report:", messageType: .exerciseSelection)
             specialState = .waitingForImageSelection(data)
             selectedImages.removeAll()
             
         case .finalReport:
-            let data = FinalReportData(
-                content: message.content ?? "",
-                selectedImages: message.selectedImages ?? []
-            )
-            chatSession.addAssistantMessage("Here's your final SOAP report with selected images:", messageType: .finalReport)
-            specialState = .finalReportReady(data)
+            // Add final report as a structured message - no special state needed
+            chatSession.addStructuredMessage(message)
+            specialState = .none
             
         case .clarificationNeeded:
-            let data = ClarificationData(
-                questions: message.questions ?? [],
-                originalContent: message.originalContent ?? ""
-            )
-            chatSession.addAssistantMessage("I need some clarification to complete the SOAP report:", messageType: .clarificationNeeded)
-            specialState = .waitingForClarification(data)
+            // Handle clarification as a normal chat message
+            let questions = message.questions ?? []
+            let clarificationText = questions.isEmpty ? 
+                (message.content ?? "I need some additional information to proceed.") :
+                "I need some clarification:\n\n" + questions.map { "• \($0)" }.joined(separator: "\n")
+            
+            chatSession.addAssistantMessage(clarificationText, messageType: .chatMessage)
+            specialState = .none
             
         case .error:
             chatSession.addAssistantMessage("I encountered an error: \(message.error ?? "Unknown error")", messageType: .error)
             specialState = .none
         }
+        
+        // Auto-save after each message update
+        saveConversationIfNeeded()
     }
     
     private func handleImageSelection() {
@@ -309,21 +362,68 @@ struct ChatView: View {
         }
     }
     
-    private func handleClarificationResponse(_ responses: [String]) {
-        specialState = .none
-        
-        // Add user responses to chat
-        let responseText = responses.enumerated().map { "\($0.offset + 1). \($0.element)" }.joined(separator: "\n")
-        chatSession.addUserMessage(responseText)
-        
-        Task {
-            await apiClient.submitClarificationResponses(responses)
-        }
-    }
     
     private func exportToPDF() {
         // TODO: Implement PDF export functionality
         print("Export to PDF requested")
+    }
+    
+    private func createFallbackSOAPReport(from content: String) -> SOAPReport {
+        // Create a basic SOAP report structure from plain text content
+        return SOAPReport(
+            patientName: nil,
+            patientAge: nil,
+            condition: "Unknown",
+            sessionDate: nil,
+            subjective: "Report content not available in structured format",
+            objective: content.isEmpty ? "No data available" : content,
+            assessment: "Assessment not available",
+            plan: "Plan not available",
+            exercises: [],
+            timestamp: ISO8601DateFormatter().string(from: Date())
+        )
+    }
+    
+    // MARK: - Conversation Persistence
+    
+    private func loadExistingConversation(id: UUID) {
+        if let existingSession = persistenceService.loadConversation(id: id) {
+            chatSession = existingSession
+            isNewConversation = false
+        }
+    }
+    
+    private func saveConversationIfNeeded() {
+        // Only save if we have messages
+        guard !chatSession.messages.isEmpty else { return }
+        
+        if isNewConversation {
+            // Save new conversation
+            _ = persistenceService.saveConversation(chatSession)
+            isNewConversation = false
+        } else {
+            // Update existing conversation
+            persistenceService.updateConversation(chatSession)
+        }
+    }
+    
+    private func saveAndStartNewSession() {
+        // Save current conversation if it has content
+        if !chatSession.messages.isEmpty {
+            saveConversationIfNeeded()
+        }
+        
+        // Start fresh
+        startNewSession()
+    }
+    
+    private func startNewSession() {
+        chatSession = ChatSession()
+        specialState = .none
+        selectedImages.removeAll()
+        currentInput = ""
+        speechRecognizer.stopRecording(autoStopped: false)
+        isNewConversation = true
     }
 }
 

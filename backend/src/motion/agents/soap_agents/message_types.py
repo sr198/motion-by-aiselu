@@ -46,35 +46,22 @@ class ChatMessage(StructuredMessage):
 
 
 class SoapDraftMessage(StructuredMessage):
-    """Message containing initial SOAP report draft without images."""
+    """Message containing initial SOAP report draft in structured format."""
     
-    def __init__(self, content: str, format: str = "markdown"):
+    def __init__(self, soap_report: Dict[str, Any]):
         super().__init__(
             MessageType.SOAP_DRAFT,
-            content=content,
-            format=format
+            soap_report=soap_report
         )
 
 
 class ExerciseSelectionMessage(StructuredMessage):
-    """Message prompting user to select exercise images."""
+    """Message prompting user to select exercise images for multiple exercises."""
     
-    def __init__(self, exercise_name: str, exercise_description: str, images: List[Dict[str, Any]]):
-        # Add selection state and IDs to images
-        processed_images = []
-        for i, img in enumerate(images):
-            processed_images.append({
-                "id": f"img_{exercise_name.replace(' ', '_').lower()}_{i}",
-                "url": img.get("url", ""),
-                "name": img.get("name", f"Exercise illustration {i+1}"),
-                "selected": False
-            })
-        
+    def __init__(self, exercises: List[Dict[str, Any]]):
         super().__init__(
             MessageType.EXERCISE_SELECTION,
-            exercise_name=exercise_name,
-            exercise_description=exercise_description,
-            images=processed_images,
+            exercises=exercises,
             requires_selection=True
         )
 
@@ -82,11 +69,10 @@ class ExerciseSelectionMessage(StructuredMessage):
 class FinalReportMessage(StructuredMessage):
     """Message containing final SOAP report with selected images."""
     
-    def __init__(self, content: str, selected_images: List[str], format: str = "markdown"):
+    def __init__(self, soap_report: Dict[str, Any], selected_images: List[str]):
         super().__init__(
             MessageType.FINAL_REPORT,
-            content=content,
-            format=format,
+            soap_report=soap_report,
             selected_images=selected_images,
             ready_for_pdf=True
         )
@@ -119,19 +105,19 @@ def create_chat_message(content: str) -> str:
     return ChatMessage(content).to_json()
 
 
-def create_soap_draft_message(content: str) -> str:
+def create_soap_draft_message(soap_report: Dict[str, Any]) -> str:
     """Helper function to create SOAP draft message JSON."""
-    return SoapDraftMessage(content).to_json()
+    return SoapDraftMessage(soap_report).to_json()
 
 
-def create_exercise_selection_message(exercise_name: str, exercise_description: str, images: List[Dict[str, Any]]) -> str:
+def create_exercise_selection_message(exercises: List[Dict[str, Any]]) -> str:
     """Helper function to create exercise selection message JSON."""
-    return ExerciseSelectionMessage(exercise_name, exercise_description, images).to_json()
+    return ExerciseSelectionMessage(exercises).to_json()
 
 
-def create_final_report_message(content: str, selected_images: List[str]) -> str:
+def create_final_report_message(soap_report: Dict[str, Any], selected_images: List[str]) -> str:
     """Helper function to create final report message JSON."""
-    return FinalReportMessage(content, selected_images).to_json()
+    return FinalReportMessage(soap_report, selected_images).to_json()
 
 
 def create_clarification_message(questions: List[str], original_content: str) -> str:
@@ -142,3 +128,64 @@ def create_clarification_message(questions: List[str], original_content: str) ->
 def create_error_message(error: str, details: Optional[str] = None) -> str:
     """Helper function to create error message JSON."""
     return ErrorMessage(error, details).to_json()
+
+
+# Helper functions for creating structured SOAP data
+
+def create_soap_item(item_type: str, content: str, emphasis: Optional[str] = None, sub_items: Optional[List[Dict[str, Any]]] = None) -> Dict[str, Any]:
+    """Create a SOAP item with proper structure."""
+    return {
+        "type": item_type,
+        "content": content,
+        "emphasis": emphasis,
+        "sub_items": sub_items
+    }
+
+def create_soap_section(title: str, items: List[Dict[str, Any]]) -> Dict[str, Any]:
+    """Create a SOAP section with proper structure."""
+    return {
+        "title": title,
+        "items": items
+    }
+
+def create_patient_info(name: Optional[str] = None, age: Optional[str] = None, 
+                       condition: Optional[str] = None, session_date: Optional[str] = None) -> Dict[str, Any]:
+    """Create patient info structure."""
+    return {
+        "name": name,
+        "age": age,
+        "condition": condition,
+        "session_date": session_date
+    }
+
+def create_soap_report(patient_info: Optional[Dict[str, Any]], subjective: Dict[str, Any], 
+                      objective: Dict[str, Any], assessment: Dict[str, Any], 
+                      plan: Dict[str, Any], timestamp: str) -> Dict[str, Any]:
+    """Create complete SOAP report structure."""
+    return {
+        "patient_info": patient_info,
+        "subjective": subjective,
+        "objective": objective,
+        "assessment": assessment,
+        "plan": plan,
+        "timestamp": timestamp
+    }
+
+def create_exercise_with_images(exercise_id: str, name: str, description: str, 
+                               search_results: List[Dict[str, Any]]) -> Dict[str, Any]:
+    """Create exercise structure with processed images."""
+    processed_images = []
+    for i, img in enumerate(search_results):
+        processed_images.append({
+            "id": f"img_{exercise_id}_{i}",
+            "url": img.get("url", ""),
+            "name": img.get("name", f"{name} illustration {i+1}"),
+            "selected": False
+        })
+    
+    return {
+        "id": exercise_id,
+        "name": name,
+        "description": description,
+        "images": processed_images
+    }

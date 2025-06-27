@@ -24,11 +24,15 @@ struct StructuredMessage: Codable, Identifiable {
     let exerciseName: String?
     let exerciseDescription: String?
     let images: [ExerciseImage]?
+    let exercises: [Exercise]? // New: multiple exercises support
     let requiresSelection: Bool?
     
     // Final report specific
     let selectedImages: [String]?
     let readyForPdf: Bool?
+    
+    // Structured SOAP report
+    let soapReport: SOAPReport?
     
     // Clarification specific
     let questions: [String]?
@@ -43,12 +47,29 @@ struct StructuredMessage: Codable, Identifiable {
         case exerciseName = "exercise_name"
         case exerciseDescription = "exercise_description"
         case images
+        case exercises
         case requiresSelection = "requires_selection"
         case selectedImages = "selected_images"
         case readyForPdf = "ready_for_pdf"
+        case soapReport = "soap_report"
         case questions
         case originalContent = "original_content"
         case error, details
+    }
+}
+
+// MARK: - Exercise
+struct Exercise: Codable, Identifiable {
+    let id: String
+    let name: String
+    let description: String
+    let images: [ExerciseImage]
+    
+    init(id: String, name: String, description: String, images: [ExerciseImage]) {
+        self.id = id
+        self.name = name
+        self.description = description
+        self.images = images
     }
 }
 
@@ -188,18 +209,38 @@ struct ImageSelectionRequest: Codable {
     }
 }
 
-// MARK: - Clarification Response Request
-struct ClarificationResponseRequest: Codable {
-    let responses: [String]
-    let messageType: String
+
+// MARK: - Simplified SOAP Report
+struct SOAPReport: Codable, Identifiable {
+    let id = UUID()
+    let patientName: String?
+    let patientAge: String?
+    let condition: String?
+    let sessionDate: String?
+    let subjective: String
+    let objective: String
+    let assessment: String
+    let plan: String
+    let exercises: [SimpleExercise]
+    let timestamp: String?
     
     private enum CodingKeys: String, CodingKey {
-        case responses
-        case messageType = "message_type"
+        case patientName = "patient_name"
+        case patientAge = "patient_age"
+        case condition
+        case sessionDate = "session_date"
+        case subjective, objective, assessment, plan, exercises, timestamp
     }
+}
+
+struct SimpleExercise: Codable, Identifiable {
+    let id = UUID()
+    let name: String
+    let description: String
+    let selectedImage: String?
     
-    init(responses: [String]) {
-        self.responses = responses
-        self.messageType = "clarification_response"
+    private enum CodingKeys: String, CodingKey {
+        case name, description
+        case selectedImage = "selected_image"
     }
 }

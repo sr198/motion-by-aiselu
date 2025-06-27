@@ -4,13 +4,18 @@ struct ChatMessageView: View {
     let message: ChatMessage
     
     var body: some View {
-        HStack {
-            if message.isFromUser {
-                Spacer(minLength: 50)
-                userMessageView
-            } else {
-                assistantMessageView
-                Spacer(minLength: 50)
+        // Special handling for SOAP reports - they should take full width
+        if message.messageType == .soapDraft || message.messageType == .finalReport {
+            soapReportFullWidthView
+        } else {
+            HStack {
+                if message.isFromUser {
+                    Spacer(minLength: 50)
+                    userMessageView
+                } else {
+                    assistantMessageView
+                    Spacer(minLength: 50)
+                }
             }
         }
     }
@@ -56,11 +61,29 @@ struct ChatMessageView: View {
     private var messageContentView: some View {
         switch message.messageType {
         case .soapDraft:
-            MarkdownText(markdown: message.content)
+            // Always use structured SOAP report - no markdown fallback
+            if let structuredMessage = message.structuredMessage,
+               let soapReport = structuredMessage.soapReport {
+                SOAPReportView(soapReport: soapReport)
+            } else {
+                // Error state - backend should always send structured data
+                VStack(alignment: .leading, spacing: 8) {
+                    HStack {
+                        Image(systemName: "exclamationmark.triangle")
+                            .foregroundColor(.orange)
+                        Text("SOAP Report Error")
+                            .font(.headline)
+                            .foregroundColor(.orange)
+                    }
+                    Text("Expected structured SOAP data but received: \(message.content)")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                }
                 .padding(.horizontal, 16)
                 .padding(.vertical, 12)
-                .background(Color(.systemGray6))
+                .background(Color.orange.opacity(0.1))
                 .cornerRadius(18)
+            }
         case .chatMessage, .none:
             Text(message.content)
                 .font(.body)
@@ -85,12 +108,67 @@ struct ChatMessageView: View {
         formatter.timeStyle = .short
         return formatter.string(from: date)
     }
+    
+    // Full-width SOAP report view
+    private var soapReportFullWidthView: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            // Header with timestamp and assistant indicator
+            HStack {
+                Image(systemName: "stethoscope")
+                    .font(.caption)
+                    .foregroundColor(.white)
+                    .frame(width: 24, height: 24)
+                    .background(Color.green)
+                    .clipShape(Circle())
+                
+                Text("SOAP Report Generated")
+                    .font(.headline)
+                    .foregroundColor(.primary)
+                
+                Spacer()
+                
+                Text(formatTime(message.timestamp))
+                    .font(.caption2)
+                    .foregroundColor(.secondary)
+            }
+            .padding(.horizontal)
+            .padding(.top, 8)
+            
+            // Full-width SOAP report
+            if let structuredMessage = message.structuredMessage,
+               let soapReport = structuredMessage.soapReport {
+                SOAPReportView(soapReport: soapReport)
+                    .background(Color(.systemGray6))
+                    .cornerRadius(12)
+                    .padding(.horizontal, 8)
+            } else {
+                // Error state
+                VStack(alignment: .leading, spacing: 8) {
+                    HStack {
+                        Image(systemName: "exclamationmark.triangle")
+                            .foregroundColor(.orange)
+                        Text("SOAP Report Error")
+                            .font(.headline)
+                            .foregroundColor(.orange)
+                    }
+                    Text("Expected structured SOAP data but received: \(message.content)")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                }
+                .padding()
+                .background(Color.orange.opacity(0.1))
+                .cornerRadius(12)
+                .padding(.horizontal, 8)
+            }
+        }
+        .padding(.bottom, 8)
+    }
 }
 
 // MARK: - Supporting Views
 
 struct FinalReportView: View {
-    let content: String
+    let soapReport: SOAPReport
     let selectedImages: [String]
     let onExportPDF: () -> Void
     
@@ -100,8 +178,7 @@ struct FinalReportView: View {
                 .font(.headline)
                 .fontWeight(.bold)
             
-            MarkdownText(markdown: content)
-                .padding()
+            SOAPReportView(soapReport: soapReport)
                 .background(Color(.systemBackground))
                 .cornerRadius(8)
                 .overlay(
@@ -109,27 +186,6 @@ struct FinalReportView: View {
                         .stroke(Color(.systemGray4), lineWidth: 1)
                 )
             
-            if !selectedImages.isEmpty {
-                Text("Selected Images: \\(selectedImages.count)")
-                    .font(.caption)
-                    .foregroundColor(.secondary)
-            }
-            
-            HStack {
-                Spacer()
-                
-                Button(action: onExportPDF) {
-                    HStack {
-                        Image(systemName: "doc.fill")
-                        Text("Export as PDF")
-                    }
-                    .padding(.horizontal, 20)
-                    .padding(.vertical, 10)
-                    .background(Color.blue)
-                    .foregroundColor(.white)
-                    .cornerRadius(8)
-                }
-            }
         }
     }
 }
@@ -145,7 +201,37 @@ struct FinalReportView: View {
         )
         
         ChatMessageView(
-            message: ChatMessage(content: "# SOAP Report\\n\\n## Subjective\\n- Patient reports lower back pain\\n- 7/10 intensity", isFromUser: false, messageType: .soapDraft)
+            message: ChatMessage(from: StructuredMessage(
+                type: .soapDraft,
+                timestamp: ISO8601DateFormatter().string(from: Date()),
+                content: "SOAP Report Content",
+                format: nil,
+                exerciseName: nil,
+                exerciseDescription: nil,
+                images: nil,
+                exercises: nil,
+                requiresSelection: nil,
+                selectedImages: nil,
+                readyForPdf: nil,
+                soapReport: SOAPReport(
+                    patientName: "John Smith",
+                    patientAge: "45",
+                    condition: "Lower back pain",
+                    sessionDate: "2024-01-15",
+                    subjective: "Chief complaint: Lower back pain, 7/10 intensity. Duration: 3 days.",
+                    objective: "Range of motion: Limited lumbar flexion (50% normal). Positive straight leg raise test.",
+                    assessment: "Clinical impression: Acute lumbar strain. Contributing factors include poor posture.",
+                    plan: "Manual therapy: Soft tissue mobilization. Continue home exercises as prescribed.",
+                    exercises: [
+                        SimpleExercise(name: "Cat-cow stretches", description: "10 reps, 3x daily", selectedImage: nil)
+                    ],
+                    timestamp: ISO8601DateFormatter().string(from: Date())
+                ),
+                questions: nil,
+                originalContent: nil,
+                error: nil,
+                details: nil
+            ))
         )
     }
     .padding()

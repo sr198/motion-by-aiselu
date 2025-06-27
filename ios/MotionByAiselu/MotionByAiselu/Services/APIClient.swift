@@ -91,38 +91,6 @@ class APIClient: ObservableObject {
         isLoading = false
     }
     
-    func submitClarificationResponses(_ responses: [String]) async {
-        guard let sessionId = currentSessionId else {
-            error = APIError.noActiveSession
-            return
-        }
-        
-        isLoading = true
-        error = nil
-        
-        do {
-            let clarificationData = ClarificationResponseRequest(responses: responses)
-            let jsonData = try JSONEncoder().encode(clarificationData)
-            let jsonString = String(data: jsonData, encoding: .utf8) ?? ""
-            
-            let request = AgentRunRequest(
-                appName: appName,
-                userId: userId,
-                sessionId: sessionId,
-                newMessage: MessageContent(text: jsonString),
-                streaming: false
-            )
-            
-            let response = try await sendAgentRequest(request)
-            await parseAgentResponse(response)
-            
-        } catch {
-            self.error = error
-            print("Error submitting clarification responses: \(error)")
-        }
-        
-        isLoading = false
-    }
     
     // MARK: - Private Methods
     
@@ -193,9 +161,11 @@ class APIClient: ObservableObject {
                     exerciseName: nil,
                     exerciseDescription: nil,
                     images: nil,
+                    exercises: nil,
                     requiresSelection: nil,
                     selectedImages: nil,
                     readyForPdf: nil,
+                    soapReport: nil,
                     questions: nil,
                     originalContent: nil,
                     error: error,
@@ -214,35 +184,21 @@ class APIClient: ObservableObject {
                 let messageText = firstPart.text
                 print("APIClient: Processing event content: \(messageText)")
                 
-                // Check if content contains JSON structure (starts with ```json)
-                if messageText.contains("```json") {
-                    // Extract JSON from markdown code block
-                    let lines = messageText.components(separatedBy: .newlines)
-                    var jsonLines: [String] = []
-                    var inJsonBlock = false
-                    
-                    for line in lines {
-                        if line.contains("```json") {
-                            inJsonBlock = true
-                            continue
-                        } else if line.contains("```") && inJsonBlock {
-                            break
-                        } else if inJsonBlock {
-                            jsonLines.append(line)
-                        }
-                    }
-                    
-                    let jsonString = jsonLines.joined(separator: "\n")
-                    print("APIClient: Extracted JSON: \(jsonString)")
-                    
-                    if let jsonData = jsonString.data(using: .utf8) {
-                        do {
-                            let message = try JSONDecoder().decode(StructuredMessage.self, from: jsonData)
-                            self.lastMessage = message
-                            return
-                        } catch {
-                            print("APIClient: Failed to parse structured message: \(error)")
-                        }
+                // Try to extract and parse JSON from the message
+                if let structuredMessage = extractAndParseJSON(from: messageText) {
+                    self.lastMessage = structuredMessage
+                    return
+                }
+                
+                // If no structured JSON found, check if this looks like a conversational response
+                // to a SOAP message (like "I've generated a SOAP report...")
+                if messageText.lowercased().contains("soap") || 
+                   messageText.lowercased().contains("report") ||
+                   messageText.lowercased().contains("exercise") {
+                    // This might be a conversational wrapper - try to extract JSON from anywhere in the text
+                    if let structuredMessage = findJSONAnywhere(in: messageText) {
+                        self.lastMessage = structuredMessage
+                        return
                     }
                 }
                 
@@ -255,9 +211,11 @@ class APIClient: ObservableObject {
                     exerciseName: nil,
                     exerciseDescription: nil,
                     images: nil,
+                    exercises: nil,
                     requiresSelection: nil,
                     selectedImages: nil,
                     readyForPdf: nil,
+                    soapReport: nil,
                     questions: nil,
                     originalContent: nil,
                     error: nil,
@@ -266,6 +224,107 @@ class APIClient: ObservableObject {
                 return
             }
         }
+    }
+    
+    private func extractAndParseJSON(from text: String) -> StructuredMessage? {
+        // First try to extract from ```json code blocks
+        if text.contains("```json") {
+            print("APIClient: Found ```json marker, attempting extraction")
+            let lines = text.components(separatedBy: .newlines)
+            var jsonLines: [String] = []
+            var inJsonBlock = false
+            
+            for (index, line) in lines.enumerated() {
+                let trimmedLine = line.trimmingCharacters(in: .whitespaces)
+                print("APIClient: Line \(index): '\(trimmedLine)', inJsonBlock: \(inJsonBlock)")
+                
+                if trimmedLine.contains("```json") {
+                    inJsonBlock = true
+                    print("APIClient: Started JSON block at line \(index)")
+                    continue
+                } else if trimmedLine == "```" && inJsonBlock {
+                    print("APIClient: Ended JSON block at line \(index)")
+                    break
+                } else if inJsonBlock {
+                    jsonLines.append(line)
+                }
+            }
+            
+            let jsonString = jsonLines.joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
+            print("APIClient: Extracted JSON from code block (\(jsonLines.count) lines): \(jsonString)")
+            
+            if !jsonString.isEmpty {
+                return parseJSONString(jsonString)
+            }
+        }
+        
+        return nil
+    }
+    
+    private func findJSONAnywhere(in text: String) -> StructuredMessage? {
+        print("APIClient: Attempting regex-based JSON extraction")
+        
+        // Look for JSON-like patterns anywhere in the text
+        let patterns = [
+            "\\{[^{}]*\"type\"[^{}]*\"soap_draft\"[\\s\\S]*?\\}(?=\\s*$|\\s*```|\\s*[^}])",  // More specific for soap_draft
+            "\\{[\\s\\S]*?\"type\"[\\s\\S]*?\\}",  // General type-based JSON objects
+        ]
+        
+        for (index, pattern) in patterns.enumerated() {
+            print("APIClient: Trying pattern \(index): \(pattern)")
+            do {
+                let regex = try NSRegularExpression(pattern: pattern, options: [.dotMatchesLineSeparators])
+                let matches = regex.matches(in: text, options: [], range: NSRange(text.startIndex..., in: text))
+                
+                print("APIClient: Found \(matches.count) matches for pattern \(index)")
+                
+                for (matchIndex, match) in matches.enumerated() {
+                    if let range = Range(match.range, in: text) {
+                        let jsonString = String(text[range]).trimmingCharacters(in: .whitespacesAndNewlines)
+                        print("APIClient: Match \(matchIndex): \(jsonString.prefix(100))...")
+                        
+                        if let message = parseJSONString(jsonString) {
+                            print("APIClient: Successfully parsed JSON from regex match")
+                            return message
+                        }
+                    }
+                }
+            } catch {
+                print("APIClient: Regex error for pattern \(index): \(error)")
+            }
+        }
+        
+        return nil
+    }
+    
+    private func parseJSONString(_ jsonString: String) -> StructuredMessage? {
+        print("APIClient: Attempting to parse JSON string of length \(jsonString.count)")
+        
+        if let jsonData = jsonString.data(using: .utf8) {
+            do {
+                let message = try JSONDecoder().decode(StructuredMessage.self, from: jsonData)
+                print("APIClient: Successfully decoded StructuredMessage of type: \(message.type)")
+                return message
+            } catch {
+                print("APIClient: Failed to parse JSON: \(error)")
+                print("APIClient: JSON string was: \(jsonString)")
+                
+                // Try to parse as raw JSON to see structure
+                do {
+                    if let jsonObject = try JSONSerialization.jsonObject(with: jsonData) as? [String: Any] {
+                        print("APIClient: Raw JSON structure: \(jsonObject.keys.sorted())")
+                        if let type = jsonObject["type"] as? String {
+                            print("APIClient: Found type field: \(type)")
+                        }
+                    }
+                } catch {
+                    print("APIClient: Even basic JSON parsing failed: \(error)")
+                }
+            }
+        } else {
+            print("APIClient: Failed to convert string to UTF8 data")
+        }
+        return nil
     }
 }
 
@@ -285,10 +344,10 @@ enum APIError: LocalizedError {
             return "Failed to create session"
         case .noActiveSession:
             return "No active session"
-        case .httpError(let code):
-            return "HTTP error: \\(code)"
-        case .decodingError(let error):
-            return "Decoding error: \\(error.localizedDescription)"
+        case .httpError(let _):
+            return "HTTP error occurred"
+        case .decodingError(let _):
+            return "Decoding error occurred"
         }
     }
 }
